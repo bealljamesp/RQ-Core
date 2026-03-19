@@ -1,35 +1,38 @@
+import os
+
 import pandas as pd
 import psycopg2
+from dotenv import load_dotenv
+
+# Load variables from .env file
+load_dotenv()
 
 
 class RiskDBManager:
-    def __init__(
-        self,
-        dbname: str = "risk_lab",
-        user: str = "postgres",
-        password: str = "YOUR_PASSWORD",
-    ):
+    def __init__(self):
+        # Reach into the environment for credentials
+        self.password = os.getenv("DB_PASSWORD")
         self.conn_params = {
-            "dbname": dbname,
-            "user": user,
-            "password": password,
+            "dbname": "risk_lab",
+            "user": "postgres",
+            "password": self.password,
             "host": "localhost",
             "port": "5432",
         }
 
-    def fetch_prices(self, ticker: str) -> pd.DataFrame:
-        """Pulls adjusted close prices for a specific ticker."""
-        query = """
-            SELECT d.trade_date, d.adj_close
-            FROM daily_metrics d
-            JOIN securities s ON d.security_id = s.security_id
-            WHERE s.ticker = %s
-            ORDER BY d.trade_date ASC
-        """
-        # Using a context manager for the connection
+    def get_data(self, query: str, params: tuple = ()) -> pd.DataFrame:
+        """Generic method to handle both SELECT and INSERT/UPDATE queries."""
         with psycopg2.connect(**self.conn_params) as conn:
-            df = pd.read_sql(query, conn, params=(ticker,))
+            with conn.cursor() as cur:
+                # 1. Execute the query
+                cur.execute(query, params)
 
-        # Convert date to index for time-series analysis
-        df["trade_date"] = pd.to_datetime(df["trade_date"])
-        return df.set_index("trade_date")
+                # 2. If it's a SELECT query, return a DataFrame
+                if query.strip().upper().startswith("SELECT"):
+                    columns = [desc[0] for desc in cur.description]
+                    data = cur.fetchall()
+                    return pd.DataFrame(data, columns=columns)
+
+                # 3. If it's an INSERT/UPDATE, just commit and return empty DF
+                conn.commit()
+                return pd.DataFrame()
